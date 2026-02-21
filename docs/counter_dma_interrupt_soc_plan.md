@@ -70,6 +70,43 @@ Keep these symbolic in RTL headers (`soc_memory_map.svh`) and firmware headers (
 
 ---
 
+## 4.1 SRAM Architecture (Detailed Draft)
+
+To make DMA + CPU integration practical, SRAM needs an explicit micro-architecture, not just a base address.
+
+### A) Recommended SRAM Partitioning
+- **TCM/Low-latency SRAM (optional):** tightly-coupled block for ISR-critical code/data.
+- **System SRAM:** shared by CPU and DMA for general data.
+- **DMA Buffers in SRAM:** reserve explicit linker sections for DMA source/destination in non-cacheable regions (or use cache maintenance).
+
+Example partition inside `0x1000_0000` 512 KB SRAM:
+- `0x1000_0000 - 0x1001_FFFF` (128 KB): firmware `.text/.rodata`
+- `0x1002_0000 - 0x1005_FFFF` (256 KB): firmware `.data/.bss/heap/stack`
+- `0x1006_0000 - 0x1006_FFFF` (64 KB): DMA source buffer
+- `0x1007_0000 - 0x1007_FFFF` (64 KB): DMA destination buffer
+
+### B) Access and Arbitration
+- If feasible, use **dual-port SRAM** (or banked SRAM) so CPU and DMA can access concurrently.
+- If single-port SRAM is used, bus arbitration must guarantee forward progress for CPU fetch/load-store during long DMA bursts.
+- Cap DMA burst length (e.g., INCR4/INCR8) to reduce latency spikes seen by ISR paths.
+
+### C) Data Integrity / Safety
+- Prefer SRAM with **SECDED ECC** for industrial reliability targets.
+- Expose ECC status/error counters through diagnostic registers if platform safety goals require traceability.
+- Define behavior on uncorrectable error (NMI, machine check, or logged fatal error policy).
+
+### D) Cache/Coherency Policy
+- If core has D-cache and DMA is non-coherent:
+  - Mark DMA SRAM windows as non-cacheable, **or**
+  - Enforce `clean/invalidate` before and after DMA transactions.
+- Include memory barriers around descriptor/data ownership transfer in firmware.
+
+### E) Firmware and Linker Constraints
+- Reserve DMA regions in linker script and place buffers with alignment attributes (e.g., 64-byte).
+- Add compile-time checks for section overflow and runtime checks for address-range validity before starting DMA.
+
+---
+
 ## 5) Register-Level Draft
 
 ### 5.1 Counter IP Registers
@@ -187,6 +224,8 @@ void machine_external_interrupt_handler(void) {
   - Counter interrupt reaches CPU and ISR executes.
   - DMA done/error interrupts correctly routed.
   - Concurrent interrupts and priority resolution.
+  - CPU+DMA contention on SRAM under worst-case burst traffic.
+  - SRAM ECC injection (if enabled) and interrupt/error handling path.
 
 ### 9.2 Firmware Validation
 - Bare-metal smoke tests:
@@ -241,9 +280,10 @@ void machine_external_interrupt_handler(void) {
 
 ## 13) Immediate Next Actions
 1. Choose exact bus standard and adapt register interface templates.
-2. Lock memory map and IRQ numbering.
+2. Lock memory map, IRQ numbering, and SRAM partition/linker regions.
 3. Create register spec source file and auto-generated artifacts.
-4. Build minimum firmware demo: counter interrupt + one DMA copy + ISR logs.
-5. Stand up CI regression for RTL simulation and firmware tests.
+4. Define DMA coherency policy (non-cacheable SRAM windows vs cache maintenance).
+5. Build minimum firmware demo: counter interrupt + one DMA copy + ISR logs.
+6. Stand up CI regression for RTL simulation and firmware tests.
 
 This draft is intentionally implementation-ready: it can be turned into tickets for architecture, RTL, verification, firmware, and integration teams.
