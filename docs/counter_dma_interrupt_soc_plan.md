@@ -20,17 +20,6 @@ Primary objective: provide a production-style reference architecture that is sim
 
 ---
 
-## 2.1 Recommended RISC-V Core Selection
-For this project, use **lowRISC Ibex** as the baseline core (RV32IMC configuration).
-
-Why Ibex for your setup:
-- **Industrial credibility**: widely used open-source core with strong verification pedigree.
-- **Interrupt-friendly**: clean machine-mode interrupt model (`irq_external_i`) that fits the INTC path in this draft.
-- **Tool compatibility**: straightforward Verilator simulation flow and good signal visibility for GTKWave debug.
-- **Complexity balance**: significantly more production-like than ultra-minimal cores while still manageable for first integration.
-
-If you want a faster "first light" bring-up at minimal integration cost, `picorv32` is a fallback option, but for your stated interrupt/DMA roadmap Ibex is the better long-term anchor.
-
 ## 3) Top-Level Architecture
 
 ### 3.1 Functional Blocks
@@ -298,61 +287,3 @@ void machine_external_interrupt_handler(void) {
 6. Stand up CI regression for RTL simulation and firmware tests.
 
 This draft is intentionally implementation-ready: it can be turned into tickets for architecture, RTL, verification, firmware, and integration teams.
-
----
-
-## 14) How to Design with Verilator + GTKWave (Practical Execution)
-
-Given your current toolchain, use a simulation-first methodology with strict milestones.
-
-### 14.1 Recommended Repository Structure
-- `rtl/`
-  - `soc_top.sv`
-  - `ibex_wrapper.sv`
-  - `counter_ip.sv`
-  - `intc.sv`
-  - `dma_mem2mem.sv`
-  - `sram_model.sv` (behavioral model for simulation)
-- `tb/`
-  - `tb_soc_top.cpp` (Verilator C++ testbench)
-  - `tb_mem_init.hex`
-  - `scenarios/` (directed test scripts/vectors)
-- `fw/`
-  - linker script, startup, ISR, drivers
-  - bare-metal tests that emit pass/fail signature
-- `sim/`
-  - `Makefile` (Verilator build/run targets)
-  - waveform outputs (`.fst`/`.vcd`)
-
-### 14.2 Bring-up Sequence (Order Matters)
-1. **CPU + SRAM only**: boot from ROM/SRAM, execute a small firmware loop.
-2. **Add MMIO decode**: read/write sanity for Counter/INTC/DMA register blocks.
-3. **Counter interrupt path**: Counter -> INTC -> Ibex external IRQ -> ISR increment counter.
-4. **DMA mem2mem without interrupts**: polling mode copy + memory signature check.
-5. **DMA interrupts**: done/error IRQ routing and ISR handling.
-6. **Concurrency stress**: Counter IRQs while DMA is active with SRAM contention.
-
-### 14.3 Verilator-Specific Design Guidance
-- Keep RTL synthesizable and avoid simulator-only behavior in design files.
-- Use `--trace-fst` for smaller/faster wave dumps when available.
-- Add lightweight assertions in RTL (SystemVerilog assertions or explicit error flags) for protocol/CSR invariants.
-- Expose debug signals at `soc_top` boundary (current IRQ ID, DMA FSM state, bus arbitration grant) to speed waveform triage.
-
-### 14.4 GTKWave Debug Playbook
-Create saved views for recurring debug sessions:
-- **Interrupt view**: `irq_*`, INTC pending/enable/claim/complete, CPU trap entry signals.
-- **DMA view**: SRC/DST/LEN regs, DMA FSM state, bus handshakes, done/error causes.
-- **Memory contention view**: CPU memory requests vs DMA requests, arbitration/grant, wait states.
-
-### 14.5 Minimum Verilator Regression Set
-- `test_boot_smoke`
-- `test_counter_irq_periodic`
-- `test_dma_mem2mem_basic`
-- `test_dma_mem2mem_unaligned_error`
-- `test_dma_irq_done_error`
-- `test_irq_dma_concurrency`
-
-Pass criteria: all tests return pass signature, no unexpected assertion failures, and stable waveforms for key handshake/IRQ events.
-
-### 14.6 Industrial Next Step After Verilator
-Once stable in Verilator, run the same firmware tests on FPGA prototype (if available) to validate timing-sensitive behavior (interrupt latency/jitter, bus contention realism) before any tape-out-oriented signoff flow.
